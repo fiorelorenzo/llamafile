@@ -1,0 +1,175 @@
+diff --git a/ggml_extend.hpp b/ggml_extend.hpp
+index fcaa92c..3aabc2a 100644
+--- a/ggml_extend.hpp
++++ b/ggml_extend.hpp
+@@ -20,32 +20,28 @@
+ #include <unordered_map>
+ #include <vector>
+ 
+-#include "ggml-alloc.h"
+-#include "ggml-backend.h"
+-#include "ggml-cpu.h"
+-#include "ggml.h"
++// stable-diffusion.cpp needs GGML_MAX_NAME >= 128, but llama.cpp uses 64
++#define GGML_MAX_NAME 128
++#include "llama.cpp/ggml/include/ggml-alloc.h"
++#include "llama.cpp/ggml/include/ggml-backend.h"
++#include "llama.cpp/ggml/include/ggml-cpu.h"
++#include "llama.cpp/ggml/include/ggml.h"
+ 
+ #include "model.h"
+ 
+ #ifdef SD_USE_CUDA
+-#include "ggml-cuda.h"
++#include "llama.cpp/ggml/include/ggml-cuda.h"
+ #endif
+ 
+ #ifdef SD_USE_METAL
+-#include "ggml-metal.h"
++#include "llama.cpp/ggml/include/ggml-metal.h"
+ #endif
+ 
+ #ifdef SD_USE_VULKAN
+-#include "ggml-vulkan.h"
++#include "llama.cpp/ggml/include/ggml-vulkan.h"
+ #endif
+ 
+-#ifdef SD_USE_OPENCL
+-#include "ggml-opencl.h"
+-#endif
+ 
+-#ifdef SD_USE_SYCL
+-#include "ggml-sycl.h"
+-#endif
+ 
+ #include "rng.hpp"
+ #include "util.h"
+diff --git a/gguf_reader.hpp b/gguf_reader.hpp
+index 5348266..d4a97c2 100644
+--- a/gguf_reader.hpp
++++ b/gguf_reader.hpp
+@@ -6,7 +6,7 @@
+ #include <string>
+ #include <vector>
+ 
+-#include "ggml.h"
++#include "llama.cpp/ggml/include/ggml.h"
+ #include "util.h"
+ 
+ struct GGUFTensorInfo {
+diff --git a/llm.hpp b/llm.hpp
+index dc04c84..1c4b3de 100644
+--- a/llm.hpp
++++ b/llm.hpp
+@@ -16,7 +16,7 @@
+ 
+ #include "clip.hpp"
+ #include "ggml_extend.hpp"
+-#include "json.hpp"
++#include "llama.cpp/vendor/nlohmann/json.hpp"
+ #include "rope.hpp"
+ #include "tokenize_util.h"
+ 
+diff --git a/model.cpp b/model.cpp
+index 01a8c45..b335954 100644
+--- a/model.cpp
++++ b/model.cpp
+@@ -21,25 +21,19 @@
+ #include "vocab_qwen.hpp"
+ #include "vocab_umt5.hpp"
+ 
+-#include "ggml-alloc.h"
+-#include "ggml-backend.h"
+-#include "ggml-cpu.h"
+-#include "ggml.h"
++#include "llama.cpp/ggml/include/ggml-alloc.h"
++#include "llama.cpp/ggml/include/ggml-backend.h"
++#include "llama.cpp/ggml/include/ggml-cpu.h"
++#include "llama.cpp/ggml/include/ggml.h"
+ 
+ #include "name_conversion.h"
+ #include "stable-diffusion.h"
+ 
+ #ifdef SD_USE_METAL
+-#include "ggml-metal.h"
++#include "llama.cpp/ggml/include/ggml-metal.h"
+ #endif
+ 
+-#ifdef SD_USE_VULKAN
+-#include "ggml-vulkan.h"
+-#endif
+ 
+-#ifdef SD_USE_OPENCL
+-#include "ggml-opencl.h"
+-#endif
+ 
+ #define ST_HEADER_SIZE_LEN 8
+ 
+diff --git a/model.h b/model.h
+index d38aee1..ea83270 100644
+--- a/model.h
++++ b/model.h
+@@ -11,12 +11,12 @@
+ #include <utility>
+ #include <vector>
+ 
+-#include "ggml-backend.h"
+-#include "ggml.h"
+-#include "gguf.h"
+-#include "json.hpp"
++#include "llama.cpp/ggml/include/ggml-backend.h"
++#include "llama.cpp/ggml/include/ggml.h"
++#include "llama.cpp/ggml/include/gguf.h"
++#include "llama.cpp/vendor/nlohmann/json.hpp"
+ #include "ordered_map.hpp"
+-#include "zip.h"
++#include "thirdparty/zip.h"
+ 
+ #define SD_MAX_DIMS 5
+ 
+diff --git a/t5.hpp b/t5.hpp
+index 4370a56..a6a8025 100644
+--- a/t5.hpp
++++ b/t5.hpp
+@@ -10,9 +10,9 @@
+ #include <string>
+ #include <unordered_map>
+ 
+-#include "darts.h"
++#include "thirdparty/darts.h"
+ #include "ggml_extend.hpp"
+-#include "json.hpp"
++#include "llama.cpp/vendor/nlohmann/json.hpp"
+ #include "model.h"
+ 
+ // Port from: https://github.com/google/sentencepiece/blob/master/src/unigram_model.h
+diff --git a/upscaler.cpp b/upscaler.cpp
+index 29ac981..722ba19 100644
+--- a/upscaler.cpp
++++ b/upscaler.cpp
+@@ -39,10 +39,6 @@ struct UpscalerGGML {
+ #ifdef SD_USE_OPENCL
+         LOG_DEBUG("Using OpenCL backend");
+         backend = ggml_backend_opencl_init();
+-#endif
+-#ifdef SD_USE_SYCL
+-        LOG_DEBUG("Using SYCL backend");
+-        backend = ggml_backend_sycl_init(0);
+ #endif
+         ModelLoader model_loader;
+         if (!model_loader.init_from_file_and_convert_name(esrgan_path)) {
+diff --git a/util.cpp b/util.cpp
+index 680ff80..f61e3d0 100644
+--- a/util.cpp
++++ b/util.cpp
+@@ -23,8 +23,8 @@
+ #include <unistd.h>
+ #endif
+ 
+-#include "ggml-cpu.h"
+-#include "ggml.h"
++#include "llama.cpp/ggml/include/ggml-cpu.h"
++#include "llama.cpp/ggml/include/ggml.h"
+ #include "stable-diffusion.h"
+ 
+ bool ends_with(const std::string& str, const std::string& ending) {

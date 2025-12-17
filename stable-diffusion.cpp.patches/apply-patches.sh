@@ -16,22 +16,36 @@ fi
 
 echo "Applying patches to stable-diffusion.cpp submodule..."
 
-echo "Applying modifications to upstream files..."
+# Convert CRLF to LF for files that may have Windows line endings
+# This ensures patches apply correctly
+echo "Normalizing line endings..."
+for f in latent-preview.h; do
+    if [ -f "$f" ]; then
+        sed -i '' $'s/\r$//' "$f" 2>/dev/null || sed -i 's/\r$//' "$f" 2>/dev/null || true
+    fi
+done
+
+echo "Applying patch files..."
 for patch_file in "$PATCHES_DIR"/*.patch; do
     if [ -f "$patch_file" ]; then
         echo "Applying $(basename "$patch_file")..."
-        patch -p0 < "$patch_file"
+        patch -p1 < "$patch_file"
     fi
 done
+
+# latent-preview.h has CRLF line endings that cause patch to fail
+# Apply the fix manually after normalizing (was done above)
+echo "Fixing latent-preview.h include path..."
+if [ -f "latent-preview.h" ]; then
+    sed -i '' 's|#include "ggml.h"|#include "llama.cpp/ggml/include/ggml.h"|g' latent-preview.h 2>/dev/null || \
+    sed -i 's|#include "ggml.h"|#include "llama.cpp/ggml/include/ggml.h"|g' latent-preview.h
+fi
 
 echo "Copying llamafile-specific files..."
 cp "$LLAMAFILE_FILES_DIR/BUILD.mk" .
 cp "$LLAMAFILE_FILES_DIR/README.llamafile" .
 cp "$LLAMAFILE_FILES_DIR/main.cpp" .
-cp "$LLAMAFILE_FILES_DIR/darts.h" .
-cp "$LLAMAFILE_FILES_DIR/miniz.h" .
-cp "$LLAMAFILE_FILES_DIR/zip.c" .
-cp "$LLAMAFILE_FILES_DIR/zip.h" .
+cp "$LLAMAFILE_FILES_DIR/server.cpp" .
 
 echo "Removing unnecessary files and directories..."
 rm -rf .github
@@ -40,7 +54,6 @@ rm -rf docs
 rm -rf examples
 rm -rf ggml
 rm -rf models
-rm -rf thirdparty
 rm -f .clang-format
 rm -f .dockerignore
 rm -f .gitignore
@@ -49,6 +62,13 @@ rm -f CMakeLists.txt
 rm -f Dockerfile
 rm -f format-code.sh
 rm -f README.md
+
+echo "Cleaning thirdparty directory (keeping needed files)..."
+# Keep httplib.h, zip.h, zip.c, miniz.h, and darts.h from thirdparty - these are needed
+if [ -d "thirdparty" ]; then
+    find thirdparty -type f ! -name 'httplib.h' ! -name 'zip.h' ! -name 'zip.c' ! -name 'miniz.h' ! -name 'darts.h' -delete
+    rm -f thirdparty/.clang-format thirdparty/CMakeLists.txt thirdparty/README.md
+fi
 
 echo ""
 echo "Patches applied successfully!"
