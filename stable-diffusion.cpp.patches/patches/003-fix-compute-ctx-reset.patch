@@ -1,0 +1,98 @@
+diff --git a/ggml_extend.hpp b/ggml_extend.hpp
+index fcaa92c..4fcb8db 100644
+--- a/ggml_extend.hpp
++++ b/ggml_extend.hpp
+@@ -20,33 +20,15 @@
+ #include <unordered_map>
+ #include <vector>
+ 
+-#include "ggml-alloc.h"
+-#include "ggml-backend.h"
+-#include "ggml-cpu.h"
+-#include "ggml.h"
++// stable-diffusion.cpp needs GGML_MAX_NAME >= 128, but llama.cpp uses 64
++#define GGML_MAX_NAME 128
++#include "llama.cpp/ggml/include/ggml-alloc.h"
++#include "llama.cpp/ggml/include/ggml-backend.h"
++#include "llama.cpp/ggml/include/ggml-cpu.h"
++#include "llama.cpp/ggml/include/ggml.h"
+ 
+ #include "model.h"
+ 
+-#ifdef SD_USE_CUDA
+-#include "ggml-cuda.h"
+-#endif
+-
+-#ifdef SD_USE_METAL
+-#include "ggml-metal.h"
+-#endif
+-
+-#ifdef SD_USE_VULKAN
+-#include "ggml-vulkan.h"
+-#endif
+-
+-#ifdef SD_USE_OPENCL
+-#include "ggml-opencl.h"
+-#endif
+-
+-#ifdef SD_USE_SYCL
+-#include "ggml-sycl.h"
+-#endif
+-
+ #include "rng.hpp"
+ #include "util.h"
+ 
+@@ -1567,6 +1549,10 @@ protected:
+ 
+     struct ggml_context* compute_ctx    = nullptr;
+     struct ggml_gallocr* compute_allocr = nullptr;
++    // When alloc_compute_buffer() runs, it builds a graph and reserves the allocator for it.
++    // We save that graph here so compute() can reuse the SAME graph for alloc_graph.
++    // This is critical: the allocator was reserved for this specific graph's tensors.
++    struct ggml_cgraph* reserved_compute_graph = nullptr;
+ 
+     std::shared_ptr<WeightAdapter> weight_adapter = nullptr;
+ 
+@@ -1697,6 +1683,9 @@ protected:
+                   get_desc().c_str(),
+                   compute_buffer_size / 1024.0 / 1024.0,
+                   ggml_backend_is_cpu(runtime_backend) ? "RAM" : "VRAM");
++        // Save the graph we just reserved for. compute() MUST use this same graph
++        // for alloc_graph, not build a new one (which would have different tensors).
++        reserved_compute_graph = gf;
+         return true;
+     }
+ 
+@@ -1907,9 +1896,18 @@ public:
+ 
+     void free_compute_buffer() {
+         if (compute_allocr != nullptr) {
+-            ggml_gallocr_free(compute_allocr);
++            // When using Metal backend (JIT compiled as dylib), the buffer struct
++            // was allocated with macOS malloc but would be freed with Cosmopolitan's
++            // free, causing heap corruption. Skip deallocation for non-CPU backends.
++            // This causes a memory leak but is acceptable for CLI applications.
++            // For server mode, this should be revisited with proper cross-module
++            // memory management (e.g., exporting deallocation functions from dylib).
++            if (ggml_backend_is_cpu(runtime_backend)) {
++                ggml_gallocr_free(compute_allocr);
++            }
+             compute_allocr = nullptr;
+         }
++        reserved_compute_graph = nullptr;
+         offload_params_to_params_backend();
+     }
+ 
+@@ -1959,8 +1957,10 @@ public:
+             LOG_ERROR("%s alloc compute buffer failed", get_desc().c_str());
+             return false;
+         }
+-        reset_compute_ctx();
+-        struct ggml_cgraph* gf = get_compute_graph(get_graph);
++        // Use the graph that was reserved in alloc_compute_buffer().
++        // We MUST use the same graph because the allocator was reserved for its tensors.
++        // Building a new graph would create different tensor objects that aren't allocated.
++        struct ggml_cgraph* gf = reserved_compute_graph;
+         if (!ggml_gallocr_alloc_graph(compute_allocr, gf)) {
+             LOG_ERROR("%s alloc compute graph failed", get_desc().c_str());
+             return false;

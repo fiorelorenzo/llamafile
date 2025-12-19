@@ -1,0 +1,37 @@
+diff --git a/ggml/src/ggml-backend.cpp b/ggml/src/ggml-backend.cpp
+index 08681f35e..af3ed3d75 100644
+--- a/ggml/src/ggml-backend.cpp
++++ b/ggml/src/ggml-backend.cpp
+@@ -90,13 +90,16 @@ ggml_backend_buffer_t ggml_backend_buffer_init(
+         struct ggml_backend_buffer_i      iface,
+                void *                     context,
+                size_t                     size) {
+-    ggml_backend_buffer_t buffer = new ggml_backend_buffer {
+-        /* .interface = */ iface,
+-        /* .buft      = */ buft,
+-        /* .context   = */ context,
+-        /* .size      = */ size,
+-        /* .usage     = */ GGML_BACKEND_BUFFER_USAGE_ANY
+-    };
++    // Use malloc instead of new for cross-module compatibility.
++    // When Metal backend is loaded as a dylib (JIT compiled by llamafile),
++    // new/delete cause heap corruption because they use different heaps.
++    // malloc/free work correctly with Cosmopolitan's unified heap.
++    ggml_backend_buffer_t buffer = (ggml_backend_buffer_t)malloc(sizeof(ggml_backend_buffer));
++    buffer->iface = iface;
++    buffer->buft = buft;
++    buffer->context = context;
++    buffer->size = size;
++    buffer->usage = GGML_BACKEND_BUFFER_USAGE_ANY;
+ 
+     return buffer;
+ }
+@@ -113,7 +116,7 @@ void ggml_backend_buffer_free(ggml_backend_buffer_t buffer) {
+     if (buffer->iface.free_buffer != NULL) {
+         buffer->iface.free_buffer(buffer);
+     }
+-    delete buffer;
++    free(buffer);
+ }
+ 
+ size_t ggml_backend_buffer_get_size(ggml_backend_buffer_t buffer) {

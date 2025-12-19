@@ -25,28 +25,8 @@ for f in latent-preview.h; do
     fi
 done
 
-echo "Applying patch files..."
-for patch_file in "$PATCHES_DIR"/*.patch; do
-    if [ -f "$patch_file" ]; then
-        echo "Applying $(basename "$patch_file")..."
-        git apply --whitespace=nowarn "$patch_file" || patch -p1 --ignore-whitespace < "$patch_file"
-    fi
-done
-
-# latent-preview.h has CRLF line endings that cause patch to fail
-# Apply the fix manually after normalizing (was done above)
-echo "Fixing latent-preview.h include path..."
-if [ -f "latent-preview.h" ]; then
-    sed -i '' 's|#include "ggml.h"|#include "llama.cpp/ggml/include/ggml.h"|g' latent-preview.h 2>/dev/null || \
-    sed -i 's|#include "ggml.h"|#include "llama.cpp/ggml/include/ggml.h"|g' latent-preview.h
-fi
-
-echo "Copying llamafile-specific files..."
-cp "$LLAMAFILE_FILES_DIR/BUILD.mk" .
-cp "$LLAMAFILE_FILES_DIR/README.llamafile" .
-cp "$LLAMAFILE_FILES_DIR/main.cpp" .
-cp "$LLAMAFILE_FILES_DIR/server.cpp" .
-
+# Remove unnecessary files and directories FIRST
+# This prevents patch errors when trying to delete binary files or submodules
 echo "Removing unnecessary files and directories..."
 rm -rf .github
 rm -rf assets
@@ -62,6 +42,53 @@ rm -f CMakeLists.txt
 rm -f Dockerfile
 rm -f format-code.sh
 rm -f README.md
+
+echo "Applying patch files..."
+for patch_file in "$PATCHES_DIR"/*.patch; do
+    if [ -f "$patch_file" ]; then
+        echo "Applying $(basename "$patch_file")..."
+        # Try git apply first, excluding binary files and already-removed directories
+        # Use --ignore-whitespace to be more lenient
+        if git apply --whitespace=nowarn --ignore-whitespace \
+            --exclude='assets/*' --exclude='ggml' --exclude='ggml/*' \
+            --exclude='*.png' --exclude='*.jpg' --exclude='*.mp4' \
+            --exclude='.github/*' --exclude='docs/*' --exclude='examples/*' \
+            --exclude='.clang-format' --exclude='.dockerignore' --exclude='.gitignore' \
+            --exclude='.gitmodules' --exclude='CMakeLists.txt' --exclude='Dockerfile' \
+            --exclude='format-code.sh' --exclude='README.md' --exclude='models/*' \
+            "$patch_file" 2>/dev/null; then
+            echo "  Applied successfully with git apply"
+        else
+            echo "  Warning: git apply failed for $(basename "$patch_file"), trying with --3way..."
+            git apply --whitespace=nowarn --ignore-whitespace --3way \
+                --exclude='assets/*' --exclude='ggml' --exclude='ggml/*' \
+                --exclude='*.png' --exclude='*.jpg' --exclude='*.mp4' \
+                --exclude='.github/*' --exclude='docs/*' --exclude='examples/*' \
+                --exclude='.clang-format' --exclude='.dockerignore' --exclude='.gitignore' \
+                --exclude='.gitmodules' --exclude='CMakeLists.txt' --exclude='Dockerfile' \
+                --exclude='format-code.sh' --exclude='README.md' --exclude='models/*' \
+                "$patch_file" 2>/dev/null || \
+            echo "  Warning: Some parts of $(basename "$patch_file") may not have applied cleanly"
+        fi
+    fi
+done
+
+# Clean up any .rej files from partial patch application
+find . -name '*.rej' -delete 2>/dev/null || true
+
+# latent-preview.h has CRLF line endings that cause patch to fail
+# Apply the fix manually after normalizing (was done above)
+echo "Fixing latent-preview.h include path..."
+if [ -f "latent-preview.h" ]; then
+    sed -i '' 's|#include "ggml.h"|#include "llama.cpp/ggml/include/ggml.h"|g' latent-preview.h 2>/dev/null || \
+    sed -i 's|#include "ggml.h"|#include "llama.cpp/ggml/include/ggml.h"|g' latent-preview.h
+fi
+
+echo "Copying llamafile-specific files..."
+cp "$LLAMAFILE_FILES_DIR/BUILD.mk" .
+cp "$LLAMAFILE_FILES_DIR/README.llamafile" .
+cp "$LLAMAFILE_FILES_DIR/main.cpp" .
+cp "$LLAMAFILE_FILES_DIR/server.cpp" .
 
 echo "Cleaning thirdparty directory (keeping needed files)..."
 # Keep httplib.h, zip.h, zip.c, miniz.h, and darts.h from thirdparty - these are needed
