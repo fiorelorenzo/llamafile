@@ -3,6 +3,39 @@
 
 PKGS += STABLE_DIFFUSION_CPP
 
+# Metal source files to embed in the executable (for runtime compilation on macOS)
+# These are extracted at runtime and compiled into ggml-metal.dylib
+SD_METAL_SOURCES := \
+	o/$(MODE)/llama.cpp/ggml/src/ggml.c.zip.o \
+	o/$(MODE)/llama.cpp/ggml/src/ggml-alloc.c.zip.o \
+	o/$(MODE)/llama.cpp/ggml/src/ggml-backend.cpp.zip.o \
+	o/$(MODE)/llama.cpp/ggml/src/ggml-quants.c.zip.o \
+	o/$(MODE)/llama.cpp/ggml/src/ggml-threading.cpp.zip.o \
+	o/$(MODE)/llama.cpp/ggml/include/ggml.h.zip.o \
+	o/$(MODE)/llama.cpp/ggml/include/gguf.h.zip.o \
+	o/$(MODE)/llama.cpp/ggml/include/ggml-cpu.h.zip.o \
+	o/$(MODE)/llama.cpp/ggml/include/ggml-alloc.h.zip.o \
+	o/$(MODE)/llama.cpp/ggml/include/ggml-backend.h.zip.o \
+	o/$(MODE)/llama.cpp/ggml/include/ggml-metal.h.zip.o \
+	o/$(MODE)/llama.cpp/ggml/src/ggml-impl.h.zip.o \
+	o/$(MODE)/llama.cpp/ggml/src/ggml-common.h.zip.o \
+	o/$(MODE)/llama.cpp/ggml/src/ggml-quants.h.zip.o \
+	o/$(MODE)/llama.cpp/ggml/src/ggml-threading.h.zip.o \
+	o/$(MODE)/llama.cpp/ggml/src/ggml-backend-impl.h.zip.o \
+	o/$(MODE)/llama.cpp/ggml/src/ggml-cpu/ggml-cpu-impl.h.zip.o \
+	o/$(MODE)/llama.cpp/ggml/src/ggml-metal/ggml-metal.cpp.zip.o \
+	o/$(MODE)/llama.cpp/ggml/src/ggml-metal/ggml-metal.metal.zip.o \
+	o/$(MODE)/llama.cpp/ggml/src/ggml-metal/ggml-metal-impl.h.zip.o \
+	o/$(MODE)/llama.cpp/ggml/src/ggml-metal/ggml-metal-device.h.zip.o \
+	o/$(MODE)/llama.cpp/ggml/src/ggml-metal/ggml-metal-device.m.zip.o \
+	o/$(MODE)/llama.cpp/ggml/src/ggml-metal/ggml-metal-device.cpp.zip.o \
+	o/$(MODE)/llama.cpp/ggml/src/ggml-metal/ggml-metal-context.h.zip.o \
+	o/$(MODE)/llama.cpp/ggml/src/ggml-metal/ggml-metal-context.m.zip.o \
+	o/$(MODE)/llama.cpp/ggml/src/ggml-metal/ggml-metal-common.h.zip.o \
+	o/$(MODE)/llama.cpp/ggml/src/ggml-metal/ggml-metal-common.cpp.zip.o \
+	o/$(MODE)/llama.cpp/ggml/src/ggml-metal/ggml-metal-ops.h.zip.o \
+	o/$(MODE)/llama.cpp/ggml/src/ggml-metal/ggml-metal-ops.cpp.zip.o
+
 STABLE_DIFFUSION_CPP_FILES := $(wildcard stable-diffusion.cpp/*.*)
 STABLE_DIFFUSION_CPP_HDRS = $(filter %.h,$(STABLE_DIFFUSION_CPP_FILES))	\
 			    $(filter %.hpp,$(STABLE_DIFFUSION_CPP_FILES))
@@ -36,7 +69,9 @@ o/$(MODE)/stable-diffusion.cpp/main:					\
 		o/$(MODE)/stable-diffusion.cpp/stable-diffusion.cpp.a	\
 		o/$(MODE)/llama.cpp/llama.cpp.a				\
 		o/$(MODE)/llamafile/llamafile.o				\
+		o/$(MODE)/llamafile/metal.o				\
 		o/$(MODE)/llamafile/zip.o				\
+		$(SD_METAL_SOURCES)					\
 		o/$(MODE)/third_party/stb/stb.a
 
 $(STABLE_DIFFUSION_CPP_OBJS): stable-diffusion.cpp/BUILD.mk
