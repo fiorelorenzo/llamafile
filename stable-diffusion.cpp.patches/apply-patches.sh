@@ -29,7 +29,7 @@ echo "Applying patch files..."
 for patch_file in "$PATCHES_DIR"/*.patch; do
     if [ -f "$patch_file" ]; then
         echo "Applying $(basename "$patch_file")..."
-        patch -p1 < "$patch_file"
+        git apply --whitespace=nowarn "$patch_file" || patch -p1 --ignore-whitespace < "$patch_file"
     fi
 done
 

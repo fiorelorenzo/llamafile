@@ -1,0 +1,61 @@
+diff --git a/stable-diffusion.cpp b/stable-diffusion.cpp
+index 44bd3cc..06d2fdf 100644
+--- a/stable-diffusion.cpp
++++ b/stable-diffusion.cpp
+@@ -155,38 +155,24 @@ public:
+     }
+
+     void init_backend() {
+-#ifdef SD_USE_CUDA
+-        LOG_DEBUG("Using CUDA backend");
+-        backend = ggml_backend_cuda_init(0);
+-#endif
+-#ifdef SD_USE_METAL
+-        LOG_DEBUG("Using Metal backend");
+-        backend = ggml_backend_metal_init();
+-#endif
+-#ifdef SD_USE_VULKAN
+-        LOG_DEBUG("Using Vulkan backend");
+-        for (int device = 0; device < ggml_backend_vk_get_device_count(); ++device) {
+-            backend = ggml_backend_vk_init(device);
+-        }
+-        if (!backend) {
+-            LOG_WARN("Failed to initialize Vulkan backend");
+-        }
+-#endif
+-#ifdef SD_USE_OPENCL
+-        LOG_DEBUG("Using OpenCL backend");
+-        // ggml_log_set(ggml_log_callback_default, nullptr); // Optional ggml logs
+-        backend = ggml_backend_opencl_init();
+-        if (!backend) {
+-            LOG_WARN("Failed to initialize OpenCL backend");
+-        }
+-#endif
+-#ifdef SD_USE_SYCL
+-        LOG_DEBUG("Using SYCL backend");
+-        backend = ggml_backend_sycl_init(0);
+-#endif
+-
+-        if (!backend) {
+-            LOG_DEBUG("Using CPU backend");
++        // Load all available backends dynamically (including GPU backends)
++        // This is required before using ggml_backend_init_best()
++        ggml_backend_load_all();
++
++        // Use ggml's dynamic backend system for runtime GPU detection
++        // This allows the same binary to work on different systems
++        // ggml_backend_init_best() tries GPU first, then falls back to CPU
++        backend = ggml_backend_init_best();
++        if (backend) {
++            const char* name = ggml_backend_name(backend);
++            if (strstr(name, "CPU") != nullptr) {
++                LOG_DEBUG("Using CPU backend");
++            } else {
++                LOG_DEBUG("Using %s backend", name);
++            }
++        } else {
++            // Fallback to CPU if ggml_backend_init_best() fails
++            LOG_DEBUG("Using CPU backend (fallback)");
+             backend = ggml_backend_cpu_init();
+         }
+     }

@@ -112,9 +112,22 @@ static std::vector<uint8_t> write_image_to_vector(
 struct SDServerParams {
     std::string listen_ip = "127.0.0.1";
     int listen_port = 7860;
+
+    // Model paths
     std::string model_path;
+    std::string diffusion_model_path;
     std::string vae_path;
     std::string taesd_path;
+    std::string controlnet_path;
+    std::string embeddings_path;
+
+    // Text encoder paths (for SD3/Flux/etc)
+    std::string clip_l_path;
+    std::string clip_g_path;
+    std::string t5xxl_path;
+    std::string llm_path;
+    std::string llm_vision_path;
+
     int n_threads = -1;
     sd_type_t wtype = SD_TYPE_COUNT;
     rng_type_t rng_type = CUDA_RNG;
@@ -122,12 +135,17 @@ struct SDServerParams {
     bool color = false;
     bool clip_on_cpu = false;
     bool vae_on_cpu = false;
+    bool control_net_cpu = false;
+    bool offload_to_cpu = false;
+    bool diffusion_fa = false;
+    bool vae_tiling = false;
 
     // Default generation params
     int default_width = 512;
     int default_height = 512;
     int default_steps = 20;
     float default_cfg = 7.0f;
+    float default_guidance = 3.5f;  // distilled guidance for Flux/etc
     sample_method_t default_sample_method = EULER_A_SAMPLE_METHOD;
     scheduler_t default_scheduler = DISCRETE_SCHEDULER;
 };
@@ -141,10 +159,26 @@ static void parse_server_args(int argc, const char** argv, SDServerParams& param
             if (++i < argc) params.listen_port = std::stoi(argv[i]);
         } else if (arg == "-m" || arg == "--model") {
             if (++i < argc) params.model_path = argv[i];
+        } else if (arg == "--diffusion-model") {
+            if (++i < argc) params.diffusion_model_path = argv[i];
         } else if (arg == "--vae") {
             if (++i < argc) params.vae_path = argv[i];
-        } else if (arg == "--taesd") {
+        } else if (arg == "--taesd" || arg == "--tae") {
             if (++i < argc) params.taesd_path = argv[i];
+        } else if (arg == "--clip_l") {
+            if (++i < argc) params.clip_l_path = argv[i];
+        } else if (arg == "--clip_g") {
+            if (++i < argc) params.clip_g_path = argv[i];
+        } else if (arg == "--t5xxl") {
+            if (++i < argc) params.t5xxl_path = argv[i];
+        } else if (arg == "--llm" || arg == "--qwen2vl") {
+            if (++i < argc) params.llm_path = argv[i];
+        } else if (arg == "--llm_vision" || arg == "--qwen2vl_vision") {
+            if (++i < argc) params.llm_vision_path = argv[i];
+        } else if (arg == "--control-net") {
+            if (++i < argc) params.controlnet_path = argv[i];
+        } else if (arg == "--embd-dir") {
+            if (++i < argc) params.embeddings_path = argv[i];
         } else if (arg == "-t" || arg == "--threads") {
             if (++i < argc) params.n_threads = std::stoi(argv[i]);
         } else if (arg == "--type") {
@@ -159,6 +193,14 @@ static void parse_server_args(int argc, const char** argv, SDServerParams& param
             params.clip_on_cpu = true;
         } else if (arg == "--vae-on-cpu") {
             params.vae_on_cpu = true;
+        } else if (arg == "--control-net-cpu") {
+            params.control_net_cpu = true;
+        } else if (arg == "--offload-to-cpu") {
+            params.offload_to_cpu = true;
+        } else if (arg == "--diffusion-fa") {
+            params.diffusion_fa = true;
+        } else if (arg == "--vae-tiling") {
+            params.vae_tiling = true;
         } else if (arg == "-W" || arg == "--width") {
             if (++i < argc) params.default_width = std::stoi(argv[i]);
         } else if (arg == "-H" || arg == "--height") {
@@ -167,6 +209,8 @@ static void parse_server_args(int argc, const char** argv, SDServerParams& param
             if (++i < argc) params.default_steps = std::stoi(argv[i]);
         } else if (arg == "--cfg-scale") {
             if (++i < argc) params.default_cfg = std::stof(argv[i]);
+        } else if (arg == "--guidance") {
+            if (++i < argc) params.default_guidance = std::stof(argv[i]);
         }
     }
 
@@ -206,21 +250,36 @@ int sd_server_main(int argc, const char** argv) {
     sd_set_log_callback(server_log_cb, nullptr);
 
     printf("[INFO] sdfile server starting...\n");
-    printf("[INFO] Model: %s\n", params.model_path.c_str());
+    if (!params.model_path.empty())
+        printf("[INFO] Model: %s\n", params.model_path.c_str());
+    if (!params.diffusion_model_path.empty())
+        printf("[INFO] Diffusion Model: %s\n", params.diffusion_model_path.c_str());
+    if (!params.llm_path.empty())
+        printf("[INFO] LLM: %s\n", params.llm_path.c_str());
     printf("[INFO] Threads: %d\n", params.n_threads);
 
     // Create SD context
     sd_ctx_params_t ctx_params;
     sd_ctx_params_init(&ctx_params);
-    ctx_params.model_path = params.model_path.c_str();
+    ctx_params.model_path = params.model_path.empty() ? nullptr : params.model_path.c_str();
+    ctx_params.diffusion_model_path = params.diffusion_model_path.empty() ? nullptr : params.diffusion_model_path.c_str();
     ctx_params.vae_path = params.vae_path.empty() ? nullptr : params.vae_path.c_str();
     ctx_params.taesd_path = params.taesd_path.empty() ? nullptr : params.taesd_path.c_str();
+    ctx_params.control_net_path = params.controlnet_path.empty() ? nullptr : params.controlnet_path.c_str();
+    ctx_params.clip_l_path = params.clip_l_path.empty() ? nullptr : params.clip_l_path.c_str();
+    ctx_params.clip_g_path = params.clip_g_path.empty() ? nullptr : params.clip_g_path.c_str();
+    ctx_params.t5xxl_path = params.t5xxl_path.empty() ? nullptr : params.t5xxl_path.c_str();
+    ctx_params.llm_path = params.llm_path.empty() ? nullptr : params.llm_path.c_str();
+    ctx_params.llm_vision_path = params.llm_vision_path.empty() ? nullptr : params.llm_vision_path.c_str();
     ctx_params.vae_decode_only = true;
     ctx_params.n_threads = params.n_threads;
     ctx_params.wtype = params.wtype;
     ctx_params.rng_type = params.rng_type;
+    ctx_params.offload_params_to_cpu = params.offload_to_cpu;
     ctx_params.keep_clip_on_cpu = params.clip_on_cpu;
     ctx_params.keep_vae_on_cpu = params.vae_on_cpu;
+    ctx_params.keep_control_net_on_cpu = params.control_net_cpu;
+    ctx_params.diffusion_flash_attn = params.diffusion_fa;
 
     sd_ctx_t* sd_ctx = new_sd_ctx(&ctx_params);
     if (!sd_ctx) {
@@ -326,6 +385,10 @@ int sd_server_main(int argc, const char** argv) {
             gen_params.sample_params.scheduler = params.default_scheduler;
             gen_params.sample_params.sample_steps = j.value("steps", params.default_steps);
             gen_params.sample_params.guidance.txt_cfg = j.value("cfg_scale", params.default_cfg);
+            gen_params.sample_params.guidance.distilled_guidance = j.value("guidance", params.default_guidance);
+
+            // VAE tiling
+            gen_params.vae_tiling_params.enabled = params.vae_tiling;
 
             // Generate
             sd_image_t* results = nullptr;
