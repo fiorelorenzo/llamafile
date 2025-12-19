@@ -7,7 +7,10 @@ PKGS += LLAMAFILE
 # Version information
 # ==============================================================================
 
-LLAMAFILE_VERSION_STRING := 0.10.0-dev
+LLAMAFILE_VERSION_MAJOR := 0
+LLAMAFILE_VERSION_MINOR := 10
+LLAMAFILE_VERSION_PATCH := 0
+LLAMAFILE_VERSION_STRING := $(LLAMAFILE_VERSION_MAJOR).$(LLAMAFILE_VERSION_MINOR).$(LLAMAFILE_VERSION_PATCH)-dev
 
 # ==============================================================================
 # Include paths
@@ -28,11 +31,19 @@ LLAMAFILE_INCLUDES := \
 # ==============================================================================
 # Compiler flags
 # ==============================================================================
+# When LLAMAFILE_TUI is defined, llama.cpp server's main() function is renamed
+# to server_main() and called by llamafile's main.cpp. In the standalone build,
+# this flag is off and a new main() function is compiled to call server_main
+# (see llama.cpp/tools/server/server.cpp).
 
 LLAMAFILE_CPPFLAGS := \
 	$(LLAMAFILE_INCLUDES) \
+	-DLLAMAFILE_VERSION_MAJOR=$(LLAMAFILE_VERSION_MAJOR) \
+	-DLLAMAFILE_VERSION_MINOR=$(LLAMAFILE_VERSION_MINOR) \
+	-DLLAMAFILE_VERSION_PATCH=$(LLAMAFILE_VERSION_PATCH) \
 	-DLLAMAFILE_VERSION_STRING=\"$(LLAMAFILE_VERSION_STRING)\" \
-    -DCOSMOCC=1
+	-DLLAMAFILE_TUI \
+	-DCOSMOCC=1
 
 # ==============================================================================
 # Source files - Highlight library
@@ -93,6 +104,7 @@ LLAMAFILE_HIGHLIGHT_SRCS := \
 LLAMAFILE_SRCS_C := \
 	llamafile/bestline.c \
 	llamafile/llamafile.c \
+	llamafile/metal.c \
 	llamafile/zip.c
 
 LLAMAFILE_SRCS_CPP := \
@@ -139,8 +151,7 @@ LLAMAFILE_OBJS := \
 LLAMAFILE_HIGHLIGHT_GPERF_FILES := $(wildcard llamafile/highlight/*.gperf)
 LLAMAFILE_HIGHLIGHT_KEYWORDS := $(LLAMAFILE_HIGHLIGHT_GPERF_FILES:%.gperf=o/$(MODE)/%.o)
 
-# Server objects for llamafile (compiled with -DLLAMAFILE_TUI to exclude standalone main)
-# Note: server.cpp is compiled separately below with LLAMAFILE_TUI defined
+# Server objects for llamafile
 LLAMAFILE_SERVER_SUPPORT_OBJS := \
 	o/$(MODE)/llama.cpp/tools/server/server-common.cpp.o \
 	o/$(MODE)/llama.cpp/tools/server/server-context.cpp.o \
@@ -148,6 +159,39 @@ LLAMAFILE_SERVER_SUPPORT_OBJS := \
 	o/$(MODE)/llama.cpp/tools/server/server-models.cpp.o \
 	o/$(MODE)/llama.cpp/tools/server/server-queue.cpp.o \
 	o/$(MODE)/llama.cpp/tools/server/server-task.cpp.o
+
+# Metal source files to embed in the executable (for runtime compilation on macOS)
+# These are extracted at runtime and compiled into ggml-metal.dylib
+LLAMAFILE_METAL_SOURCES := \
+	o/$(MODE)/llama.cpp/ggml/src/ggml.c.zip.o \
+	o/$(MODE)/llama.cpp/ggml/src/ggml-alloc.c.zip.o \
+	o/$(MODE)/llama.cpp/ggml/src/ggml-backend.cpp.zip.o \
+	o/$(MODE)/llama.cpp/ggml/src/ggml-quants.c.zip.o \
+	o/$(MODE)/llama.cpp/ggml/src/ggml-threading.cpp.zip.o \
+	o/$(MODE)/llama.cpp/ggml/include/ggml.h.zip.o \
+	o/$(MODE)/llama.cpp/ggml/include/gguf.h.zip.o \
+	o/$(MODE)/llama.cpp/ggml/include/ggml-cpu.h.zip.o \
+	o/$(MODE)/llama.cpp/ggml/include/ggml-alloc.h.zip.o \
+	o/$(MODE)/llama.cpp/ggml/include/ggml-backend.h.zip.o \
+	o/$(MODE)/llama.cpp/ggml/include/ggml-metal.h.zip.o \
+	o/$(MODE)/llama.cpp/ggml/src/ggml-impl.h.zip.o \
+	o/$(MODE)/llama.cpp/ggml/src/ggml-common.h.zip.o \
+	o/$(MODE)/llama.cpp/ggml/src/ggml-quants.h.zip.o \
+	o/$(MODE)/llama.cpp/ggml/src/ggml-threading.h.zip.o \
+	o/$(MODE)/llama.cpp/ggml/src/ggml-backend-impl.h.zip.o \
+	o/$(MODE)/llama.cpp/ggml/src/ggml-cpu/ggml-cpu-impl.h.zip.o \
+	o/$(MODE)/llama.cpp/ggml/src/ggml-metal/ggml-metal.cpp.zip.o \
+	o/$(MODE)/llama.cpp/ggml/src/ggml-metal/ggml-metal.metal.zip.o \
+	o/$(MODE)/llama.cpp/ggml/src/ggml-metal/ggml-metal-impl.h.zip.o \
+	o/$(MODE)/llama.cpp/ggml/src/ggml-metal/ggml-metal-device.h.zip.o \
+	o/$(MODE)/llama.cpp/ggml/src/ggml-metal/ggml-metal-device.m.zip.o \
+	o/$(MODE)/llama.cpp/ggml/src/ggml-metal/ggml-metal-device.cpp.zip.o \
+	o/$(MODE)/llama.cpp/ggml/src/ggml-metal/ggml-metal-context.h.zip.o \
+	o/$(MODE)/llama.cpp/ggml/src/ggml-metal/ggml-metal-context.m.zip.o \
+	o/$(MODE)/llama.cpp/ggml/src/ggml-metal/ggml-metal-common.h.zip.o \
+	o/$(MODE)/llama.cpp/ggml/src/ggml-metal/ggml-metal-common.cpp.zip.o \
+	o/$(MODE)/llama.cpp/ggml/src/ggml-metal/ggml-metal-ops.h.zip.o \
+	o/$(MODE)/llama.cpp/ggml/src/ggml-metal/ggml-metal-ops.cpp.zip.o
 
 LLAMAFILE_DEPS := \
 	$(GGML_OBJS) \
@@ -157,6 +201,7 @@ LLAMAFILE_DEPS := \
 	$(HTTPLIB_OBJS) \
 	$(LLAMAFILE_SERVER_SUPPORT_OBJS) \
 	$(LLAMAFILE_HIGHLIGHT_KEYWORDS) \
+	$(LLAMAFILE_METAL_SOURCES) \
 	o/$(MODE)/third_party/stb/stb_image_resize2.o
 
 # ==============================================================================
@@ -169,10 +214,10 @@ LLAMAFILE_SERVER_INCS := \
 	-iquote llama.cpp/tools/server \
 	-iquote o/$(MODE)/llama.cpp/tools/server
 
-# Compile server.cpp with -DLLAMAFILE_TUI to exclude standalone main()
+# Compile server.cpp
 o/$(MODE)/llamafile/server.cpp.o: llama.cpp/tools/server/server.cpp $(SERVER_ASSETS)
 	@mkdir -p $(@D)
-	$(CXX) $(CXXFLAGS) $(LLAMAFILE_CPPFLAGS) $(LLAMAFILE_SERVER_INCS) -DLLAMAFILE_TUI -c -o $@ $<
+	$(CXX) $(CXXFLAGS) $(LLAMAFILE_CPPFLAGS) $(LLAMAFILE_SERVER_INCS) -c -o $@ $<
 
 # ==============================================================================
 # Main executable
@@ -197,7 +242,7 @@ o/$(MODE)/llamafile/llamafile: \
 
 o/$(MODE)/llamafile/%.o: llamafile/%.c
 	@mkdir -p $(@D)
-	$(CC) $(CFLAGS) $(LLAMAFILE_INCLUDES) -c -o $@ $<
+	$(CC) $(CFLAGS) $(LLAMAFILE_CPPFLAGS) -c -o $@ $<
 
 o/$(MODE)/llamafile/%.o: llamafile/%.cpp
 	@mkdir -p $(@D)

@@ -58,6 +58,7 @@ extern llama_context *g_ctx;
 extern llama_model *g_model;
 extern std::vector<int> g_history;
 extern volatile sig_atomic_t g_got_sigint;
+extern bool g_interrupted_exit;
 
 int main(int, char **);
 

@@ -27,7 +27,10 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <sys/mman.h>
+#include <sys/stat.h>
+#include <time.h>
 #include <unistd.h>
 
 #define Min(a, b) ((a) < (b) ? (a) : (b))
@@ -488,30 +491,207 @@ bool llamafile_has(char **a, const char *x) {
     return false;
 }
 
-// ==============================================================================
-// GPU stubs
-// ==============================================================================
-// These are stub implementations for GPU detection. In the full llamafile,
-// these check for CUDA/ROCm/Metal support. For this simplified TUI build,
-// we default to CPU-only operation.
-
-bool llamafile_has_cuda(void) {
-    // In full llamafile, this dynamically loads CUDA/ROCm support
-    return false;
+static const char *llamafile_get_home_dir(void) {
+    const char *homedir;
+    if (!(homedir = getenv("HOME")) || !*homedir)
+        homedir = ".";
+    return homedir;
 }
 
-bool llamafile_has_metal(void) {
-#ifdef __APPLE__
-    // On macOS ARM64 (Apple Silicon), Metal is typically available
-    // For proper implementation, this would dynamically load Metal support
-#ifdef __aarch64__
-    return IsXnuSilicon();
-#endif
-#endif
+/**
+ * Returns path of directory for app-specific files.
+ * Path includes version number: ~/.llamafile/v/<major>.<minor>.<patch>/
+ * This ensures different versions don't overwrite each other's compiled dylibs.
+ */
+void llamafile_get_app_dir(char *path, size_t size) {
+    snprintf(path, size, "%s/.llamafile/v/%d.%d.%d/",
+             llamafile_get_home_dir(),
+             LLAMAFILE_VERSION_MAJOR,
+             LLAMAFILE_VERSION_MINOR,
+             LLAMAFILE_VERSION_PATCH);
+}
+
+static int copy_file_contents(int fdin, int fdout) {
+    char buf[8192];
+    ssize_t nread;
+    while ((nread = read(fdin, buf, sizeof(buf))) > 0) {
+        char *ptr = buf;
+        while (nread > 0) {
+            ssize_t nwritten = write(fdout, ptr, nread);
+            if (nwritten < 0) return -1;
+            nread -= nwritten;
+            ptr += nwritten;
+        }
+    }
+    return nread < 0 ? -1 : 0;
+}
+
+/**
+ * Returns true if `zip` was successfully copied to `to`.
+ *
+ * Copying happens atomically. The `zip` argument is a file system path,
+ * which may reside under `/zip/...` to relocate a compressed executable
+ * asset to the local filesystem.
+ */
+bool llamafile_extract(const char *zip, const char *to) {
+    int fdin, fdout;
+    char stage[PATH_MAX];
+    if (FLAG_verbose)
+        fprintf(stderr, "extracting %s to %s\n", zip, to);
+    strlcpy(stage, to, sizeof(stage));
+    if (strlcat(stage, ".XXXXXX", sizeof(stage)) >= sizeof(stage)) {
+        errno = ENAMETOOLONG;
+        perror(to);
+        return false;
+    }
+    if ((fdout = mkstemp(stage)) == -1) {
+        perror(stage);
+        return false;
+    }
+    if ((fdin = open(zip, O_RDONLY | O_CLOEXEC)) == -1) {
+        perror(zip);
+        close(fdout);
+        unlink(stage);
+        return false;
+    }
+    if (copy_file_contents(fdin, fdout) == -1) {
+        perror(zip);
+        close(fdin);
+        close(fdout);
+        unlink(stage);
+        return false;
+    }
+    if (close(fdout)) {
+        perror(to);
+        close(fdin);
+        unlink(stage);
+        return false;
+    }
+    if (close(fdin)) {
+        perror(zip);
+        unlink(stage);
+        return false;
+    }
+    if (rename(stage, to)) {
+        perror(to);
+        unlink(stage);
+        return false;
+    }
+    return true;
+}
+
+static int is_file_newer_than_time(const char *path, const char *other) {
+    struct stat st1, st2;
+    if (stat(path, &st1)) {
+        perror(path);
+        return -1;
+    }
+    if (stat(other, &st2)) {
+        if (errno == ENOENT) {
+            return true;
+        } else {
+            perror(other);
+            return -1;
+        }
+    }
+    return timespec_cmp(st1.st_mtim, st2.st_mtim) > 0;
+}
+
+static int is_file_newer_than_bytes(const char *path, const char *other) {
+    int other_fd;
+    if ((other_fd = open(other, O_RDONLY | O_CLOEXEC)) == -1) {
+        if (errno == ENOENT) {
+            return true;
+        } else {
+            perror(other);
+            return -1;
+        }
+    }
+    int path_fd;
+    if ((path_fd = open(path, O_RDONLY | O_CLOEXEC)) == -1) {
+        perror(path);
+        close(other_fd);
+        return -1;
+    }
+    int res;
+    off_t i = 0;
+    for (;;) {
+        char path_buf[512];
+        ssize_t path_rc = pread(path_fd, path_buf, sizeof(path_buf), i);
+        if (path_rc == -1) {
+            perror(path);
+            res = -1;
+            break;
+        }
+        char other_buf[512];
+        ssize_t other_rc = pread(other_fd, other_buf, sizeof(other_buf), i);
+        if (other_rc == -1) {
+            perror(other);
+            res = -1;
+            break;
+        }
+        if (!path_rc || !other_rc) {
+            if (!path_rc && !other_rc)
+                res = false;
+            else
+                res = true;
+            break;
+        }
+        size_t size = path_rc;
+        if (other_rc < path_rc)
+            size = other_rc;
+        if (memcmp(path_buf, other_buf, size)) {
+            res = true;
+            break;
+        }
+        i += size;
+    }
+    if (close(path_fd)) {
+        perror(path);
+        res = -1;
+    }
+    if (close(other_fd)) {
+        perror(other);
+        res = -1;
+    }
+    return res;
+}
+
+/**
+ * Returns 1 if `path` should replace `other`, 0 if not, -1 on error.
+ *
+ * For /zip/ paths, compares file contents byte-by-byte.
+ * For regular paths, compares modification timestamps.
+ */
+int llamafile_is_file_newer_than(const char *path, const char *other) {
+    if (startswith(path, "/zip/"))
+        return is_file_newer_than_bytes(path, other);
+    else
+        return is_file_newer_than_time(path, other);
+}
+
+// ==============================================================================
+// Logging
+// ==============================================================================
+
+void llamafile_log_callback_null(int level, const char *text, void *user_data) {
+    (void)level;
+    (void)text;
+    (void)user_data;
+}
+
+// ==============================================================================
+// GPU support
+// ==============================================================================
+// llamafile_has_metal() is defined in metal.c with full dynamic loading support
+
+bool llamafile_has_cuda(void) {
+    // TODO: Implement CUDA/ROCm dynamic loading support
     return false;
 }
 
 bool llamafile_has_amd_gpu(void) {
+    // TODO: Implement AMD GPU support
     return false;
 }
 

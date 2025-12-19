@@ -19,8 +19,10 @@
 
 #include <cosmo.h>
 #include <cstdio>
+#include <cstdlib>
 #include <signal.h>
 #include <string>
+#include <unistd.h>
 #include <vector>
 
 #include "arg.h"
@@ -32,7 +34,6 @@
 
 #include "color.h"
 #include "compute.h"
-#include "llama.h"  // llamafile wrapper
 #include "string.h"
 #include "llamafile.h"
 
@@ -40,13 +41,6 @@
 #ifndef LLAMAFILE_VERSION_STRING
 #define LLAMAFILE_VERSION_STRING "0.10.0-dev"
 #endif
-
-// Null log callback to suppress llama.cpp logging
-static void llama_log_callback_null(ggml_log_level level, const char *text, void *user_data) {
-    (void)level;
-    (void)text;
-    (void)user_data;
-}
 
 namespace lf {
 namespace chatbot {
@@ -103,8 +97,9 @@ int main(int argc, char **argv) {
     // print logo
     logo(argv);
 
-    // Check if verbose mode is requested
+    // Check if verbose mode is requested (must be set before Metal init)
     bool verbose = llamafile_has(argv, "--verbose");
+    FLAG_verbose = verbose ? 1 : 0;
 
     // Initialize params with defaults
     g_params = &s_params;
@@ -113,11 +108,27 @@ int main(int argc, char **argv) {
     g_params->sampling.temp = 0;  // don't use randomness by default
     g_params->prompt = DEFAULT_SYSTEM_PROMPT;
 
+    // Initialize GPU support (must happen BEFORE llama_backend_init())
+    // This triggers dynamic compilation and loading of GPU backends
+    print_ephemeral("initializing gpu...");
+    if (llamafile_has_metal()) {
+        // Metal dylib loaded - disable logging in it too (it has its own copy of ggml)
+        if (!verbose) {
+            llamafile_metal_log_set(llamafile_log_callback_null, NULL);
+        }
+    }
+    if (verbose)
+        clear_ephemeral();
+
     // parse flags
     print_ephemeral("loading backend...");
     llama_backend_init();
     common_init();
 
+    // NOTE that we are currently using llama.cpp flags parser here, so
+    // either we create a new kind of example for a custom set of flags
+    // or we need to deal with them separately and remove them prior to
+    // this step (see removeArgs in main.cpp)
     if (!common_params_parse(argc, argv, *g_params, LLAMA_EXAMPLE_MAIN)) {
         fprintf(stderr, "error: failed to parse flags\n");
         exit(1);
@@ -128,7 +139,7 @@ int main(int argc, char **argv) {
     // We must set this AFTER common_init() since it overwrites the log callback
     // and BEFORE model loading to suppress those logs
     if (!verbose) {
-        llama_log_set(llama_log_callback_null, NULL);
+        llama_log_set((ggml_log_callback)llamafile_log_callback_null, NULL);
     }
 
     print_ephemeral("loading model...");
@@ -195,6 +206,11 @@ int main(int argc, char **argv) {
     // Run the REPL
     repl();
 
+    // Synchronize before cleanup to ensure all GPU operations complete
+    if (g_ctx) {
+        llama_synchronize(g_ctx);
+    }
+
     // Cleanup
     if (g_mtmd) {
         print_ephemeral("freeing vision model...");
@@ -204,6 +220,12 @@ int main(int argc, char **argv) {
 
     if (g_sampler) {
         common_sampler_free(g_sampler);
+    }
+
+    // If interrupted, directly exit to avoid Metal backend crash on exit
+    // (NOTE: the issue occurs when llama_free(g_ctx) is run)
+    if (g_interrupted_exit) {
+        _exit(0);
     }
 
     print_ephemeral("freeing context...");

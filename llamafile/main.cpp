@@ -81,7 +81,7 @@ int removeArgs(int argc, char* argv[], const std::set<std::string>& args_to_remo
     }
 
     // `write_idx` is now the new number of arguments
-    // NULL out argv[write_idx] to guarantee that argv[argc] == NULL 
+    // NULL out argv[write_idx] to guarantee that argv[argc] == NULL
     argv[write_idx] = nullptr;
 
     return write_idx;

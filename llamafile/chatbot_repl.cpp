@@ -59,6 +59,9 @@ void on_sigint(int sig) {
     g_got_sigint = 1;
 }
 
+// Flag to track if we're exiting due to interrupt (skip cleanup)
+bool g_interrupted_exit = false;
+
 bool is_empty(const char *s) {
     int c;
     while ((c = *s++))
@@ -150,7 +153,13 @@ void repl() {
     HighlightTxt txt;
     HighlightMarkdown markdown;
     ColorBleeder bleeder(is_base_model() ? (Highlight *)&txt : (Highlight *)&markdown);
-    signal(SIGINT, on_sigint);
+
+    // Save old signal handler and install ours
+    struct sigaction sa, old_sa;
+    sa.sa_handler = on_sigint;
+    sa.sa_flags = 0;
+    sigemptyset(&sa.sa_mask);
+    sigaction(SIGINT, &sa, &old_sa);
 
     // run chatbot
     for (;;) {
@@ -164,8 +173,13 @@ void repl() {
         write(1, RESET, strlen(RESET));
         g_last_printed_char = '\n';
         if (!line) {
-            if (g_got_sigint)
+            if (g_got_sigint) {
                 ensure_newline();
+            }
+            // Skip cleanup to avoid Metal crash (see chatbot_main)
+            // Setting g_interrupted_exit here covers both CTRL+C
+            // (sigint) and CTRL+D (newline)
+            g_interrupted_exit = true;
             break;
         }
         if (!is_base_model() && is_empty(line)) {
@@ -222,6 +236,9 @@ void repl() {
         print(s);
         ensure_newline();
     }
+
+    // Restore original signal handler before cleanup
+    sigaction(SIGINT, &old_sa, nullptr);
 }
 
 } // namespace chatbot
